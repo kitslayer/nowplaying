@@ -1,0 +1,5 @@
+#!/bin/bash
+# nowplaying launcher -- runs the package out of its own venv.
+PROJECT="/home/miles/nowplaying"
+export PYTHONPATH="$PROJECT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PROJECT/.venv/bin/python" -m nowplaying "$@"

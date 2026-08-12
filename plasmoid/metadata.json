@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "kitslayer29@gmail.com",
+                "Name": "Miles"
+            }
+        ],
+        "Category": "Multimedia",
+        "Description": "Scrolls the lyrics of whatever is currently playing through your panel",
+        "Icon": "media-optical-audio",
+        "Id": "org.kde.nowplaying",
+        "License": "MIT",
+        "Name": "Now Playing Lyrics",
+        "Version": "1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

@@ -1,0 +1,157 @@
+"""Terminal karaoke view."""
+from __future__ import annotations
+
+import threading
+import time
+
+from rich.align import Align
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
+
+from . import client
+from .state import State
+
+FPS = 15
+CONTEXT = 3  # lyric lines shown either side of the current one
+
+
+def _fmt(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+class TUI:
+    def __init__(self, source: str = "auto") -> None:
+        self.state = State()
+        self.lock = threading.Lock()
+        self.source = source
+        self.stop = threading.Event()
+
+    def _reader(self) -> None:
+        while not self.stop.is_set():
+            try:
+                sock = client.connect(autostart=True, source=self.source)
+                for state in client.stream(sock):
+                    with self.lock:
+                        self.state = state
+                    if self.stop.is_set():
+                        return
+            except (ConnectionError, OSError):
+                pass
+            if self.stop.wait(2):
+                return
+            with self.lock:
+                self.state.status = "reconnecting"
+
+    # --- rendering -----------------------------------------------------------
+    def _header(self, s: State, pos: float) -> Text:
+        if s.title:
+            head = Text()
+            head.append("♪ ", style="bold magenta")
+            head.append(s.artist or "Unknown artist", style="bold cyan")
+            head.append("  —  ")
+            head.append(s.title, style="bold white")
+            if s.duration:
+                head.append(f"   {_fmt(pos)} / {_fmt(s.duration)}", style="dim")
+            else:
+                head.append(f"   {_fmt(pos)}", style="dim")
+            return head
+        label = {
+            "idle": "waiting for audio…",
+            "searching": "listening…",
+            "paused": "paused",
+            "error": "error",
+        }.get(s.status, s.status)
+        return Text(f"♪ {label}", style="bold yellow")
+
+    def _lyrics(self, s: State, pos: float, height: int) -> Group:
+        if s.lyrics:
+            idx = -1
+            lo, hi = 0, len(s.lyrics) - 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if s.lyrics[mid][0] <= pos:
+                    idx, lo = mid, mid + 1
+                else:
+                    hi = mid - 1
+            span = max(1, min(CONTEXT, (height - 4) // 2))
+            start = max(0, idx - span)
+            end = min(len(s.lyrics), idx + span + 2)
+            rows = []
+            for i in range(start, end):
+                text = s.lyrics[i][1] or "♪"
+                if i == idx:
+                    rows.append(Align.center(
+                        Text(text, style="bold white on grey19")))
+                else:
+                    distance = abs(i - idx)
+                    style = "grey62" if distance == 1 else "grey42" if distance == 2 else "grey30"
+                    rows.append(Align.center(Text(text, style=style)))
+            if idx < 0:
+                rows.insert(0, Align.center(Text("…", style="dim")))
+            return Group(*rows)
+
+        if s.lyrics_plain:
+            body = Text(s.lyrics_plain, style="grey62")
+            return Group(Align.center(Text("(unsynced lyrics)", style="dim yellow")),
+                         Text(""), body)
+
+        msg = {
+            "playing": s.message or "no lyrics for this track",
+            "searching": "listening for a match…",
+            "idle": "no audio detected",
+            "paused": "audio stopped",
+            "error": s.message,
+        }.get(s.status, s.message or "…")
+        return Group(Align.center(Text(msg, style="dim")))
+
+    def _footer(self, s: State) -> Text:
+        bits = []
+        if s.source_label:
+            bits.append(s.source_label)
+        if s.lyrics_source:
+            bits.append(f"{s.lyrics_source}{' · synced' if s.lyrics_synced else ''}")
+        if s.confidence:
+            bits.append(s.confidence)
+        if s.message and s.status == "playing":
+            bits.append(s.message)
+        bits.append("q to quit")
+        return Text(" · ".join(bits), style="dim")
+
+    def render(self, height: int) -> Panel:
+        with self.lock:
+            s = self.state
+            pos = s.position()
+        return Panel(
+            Group(
+                Align.center(self._header(s, pos)),
+                Text(""),
+                self._lyrics(s, pos, height),
+            ),
+            title="nowplaying",
+            subtitle=self._footer(s),
+            border_style="magenta" if s.status == "playing" else "grey35",
+            padding=(1, 2),
+        )
+
+    def run(self) -> int:
+        console = Console()
+        thread = threading.Thread(target=self._reader, daemon=True)
+        thread.start()
+        try:
+            with Live(self.render(console.size.height), console=console,
+                      refresh_per_second=FPS, screen=True) as live:
+                while True:
+                    live.update(self.render(console.size.height))
+                    time.sleep(1 / FPS)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop.set()
+        return 0
+
+
+def main(source: str = "auto") -> int:
+    return TUI(source=source).run()

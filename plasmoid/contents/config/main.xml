@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="tickerWidth" type="Int">
+      <label>Width of the ticker in the panel, in pixels</label>
+      <default>340</default>
+    </entry>
+    <entry name="leadInMs" type="Int">
+      <label>Slide each line up this many ms early, so it has settled into
+      place by the time it is sung</label>
+      <default>300</default>
+    </entry>
+  </group>
+</kcfg>

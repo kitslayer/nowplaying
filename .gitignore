@@ -1,0 +1,17 @@
+# Virtualenv -- recreate with the commands in the README
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime state, caches and captured audio (all live in ~/.cache/nowplaying)
+*.log
+clip.wav
+state.json
+
+# Never commit credentials -- the Plex token lives in
+# ~/.config/nowplaying/plex.env, deliberately outside this tree
+plex.env
+*.env
