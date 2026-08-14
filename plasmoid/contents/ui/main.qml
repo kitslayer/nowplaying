@@ -216,9 +216,10 @@ PlasmoidItem {
             Item {
                 id: artSlot
 
+                // Fill nearly the full panel height -- a 2px breathing gap top
+                // and bottom rather than a full smallSpacing each side.
                 readonly property int side:
-                    Math.max(Kirigami.Units.iconSizes.small,
-                             strip.height - Kirigami.Units.smallSpacing * 2)
+                    Math.max(Kirigami.Units.iconSizes.small, strip.height - 4)
 
                 Layout.preferredWidth: side
                 Layout.preferredHeight: side

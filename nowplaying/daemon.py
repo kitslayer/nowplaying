@@ -30,6 +30,7 @@ class Daemon:
         self._last_verify = 0.0
         self._mpris_key = ""
         self._paused_since = 0.0
+        self._stream: audio.StreamCapture | None = None
         # (position, wall) of a measurement that disagreed with the clock and is
         # waiting on a second opinion before we act on it.
         self._pending_resync: tuple[float, float] | None = None
@@ -157,26 +158,45 @@ class Daemon:
             s.message = ""
 
     # --- recognition ---------------------------------------------------------
-    async def _capture(self, seconds: float) -> audio.Capture | None:
+    def _ensure_stream(self) -> audio.StreamCapture | None:
+        """One capture stream, held open, so the recording indicator stays
+        steady instead of blinking once per probe."""
         source, reason = audio.resolve_source(self.source_pref)
         if not source:
             self._set_status("error", "no audio source available")
             return None
-        self.state.source_label = f"{reason}"
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, audio.capture, source, seconds, self.clip_path)
+        self.state.source_label = reason
+        if self._stream is not None and (self._stream.source != source
+                                         or not self._stream.alive()):
+            self._stream.stop()
+            self._stream = None
+        if self._stream is None:
+            self._stream = audio.StreamCapture(source)
+            if not self._stream.start():
+                self._stream = None
+                self._set_status("error", "could not open the audio device")
+                return None
+            log.info("capture stream open on %s (%s)", source, reason)
+        return self._stream
+
+    def _stop_stream(self) -> None:
+        if self._stream is not None:
+            log.info("closing capture stream")
+            self._stream.stop()
+            self._stream = None
 
     async def _recognise_now(self) -> None:
-        clip = await self._capture(config.CLIP_SECONDS)
+        stream = self._ensure_stream()
+        if stream is None:
+            return
+        clip = stream.snapshot(config.CLIP_SECONDS)
         if clip is None:
-            return
-        if not clip.complete:
-            self._set_status("error", "capture failed (is PipeWire running?)")
-            return
+            return  # buffer still filling
         if clip.rms < config.SILENCE_RMS:
             self._go_silent()
             return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, audio.write_wav, clip.raw, self.clip_path)
 
         self._last_verify = time.monotonic()
         try:
@@ -364,12 +384,14 @@ class Daemon:
             loop = asyncio.get_running_loop()
             now = await loop.run_in_executor(None, mpris.poll)
             if now is not None and now.title and now.status.lower() != "stopped":
+                self._stop_stream()   # a player is describing itself; stop listening
                 await self._apply_mpris(now)
                 await self.broadcast()
                 await asyncio.sleep(1.0)
                 return
             if self.source_pref == "mpris":
                 # No player: stay idle rather than opening the audio device.
+                self._stop_stream()
                 if self.state.key:
                     self._clear_track(status="idle", message="no player")
                     self._mpris_key = ""
@@ -381,12 +403,16 @@ class Daemon:
                 return
             self._mpris_key = ""
 
-        # Cheap probe: is there any sound at all right now?
-        probe = await self._capture(config.PROBE_SECONDS)
-        if probe is None:
+        # Read the level out of the rolling buffer -- no new stream, so the
+        # recording indicator doesn't flicker.
+        stream = self._ensure_stream()
+        if stream is None:
             await asyncio.sleep(config.IDLE_POLL)
             return
-        if not probe.complete or probe.rms < config.SILENCE_RMS:
+        if stream.seconds_buffered() < config.PROBE_SECONDS:
+            await asyncio.sleep(0.5)   # still filling after opening
+            return
+        if stream.level(config.PROBE_SECONDS) < config.SILENCE_RMS:
             self._go_silent()
             await self.broadcast()
             await asyncio.sleep(config.IDLE_POLL)
@@ -432,6 +458,7 @@ class Daemon:
         finally:
             loop_task.cancel()
             heartbeat.cancel()
+            self._stop_stream()
             with contextlib.suppress(OSError):
                 sock.unlink()
             with contextlib.suppress(OSError):
