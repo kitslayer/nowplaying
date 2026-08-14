@@ -42,6 +42,12 @@ PROBE_SECONDS = 1.0
 # that a walk-away hands the space back.
 PAUSE_IDLE_SECONDS = 15.0
 
+# Some sources report position as a periodic checkpoint rather than a live
+# clock -- Plex's viewOffset only moves every ~15s. Re-anchoring on every poll
+# would keep yanking the local clock back to a stale reading, so only re-anchor
+# when a genuinely new reading disagrees with the running clock by this much.
+POSITION_RESYNC_TOLERANCE = 2.5
+
 IDLE_POLL = 3.0          # seconds between silence probes when nothing is playing
 SEARCH_INTERVAL = 2.0    # gap between recognition attempts while searching
 # Re-recognise this often while locked, which is also how fast a mid-track skip

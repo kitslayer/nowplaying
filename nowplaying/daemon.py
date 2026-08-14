@@ -30,6 +30,7 @@ class Daemon:
         self._last_verify = 0.0
         self._mpris_key = ""
         self._paused_since = 0.0
+        self._last_src_pos = -1.0
         self._stream: audio.StreamCapture | None = None
         # (position, wall) of a measurement that disagreed with the clock and is
         # waiting on a second opinion before we act on it.
@@ -325,6 +326,8 @@ class Daemon:
             self._clear_track(status="playing")
             self._clear_idle()   # a new track wins the widget back immediately
             self._paused_since = 0.0
+            self._last_src_pos = -1.0
+            s.anchor_wall = 0.0   # force a fresh anchor for the new track
             s.artist, s.title, s.album = now.artist, now.title, now.album
             s.key = "mpris:" + now.key
             s.source_label = "player metadata (mpris)"
@@ -357,9 +360,29 @@ class Daemon:
                                           artist=s.artist, album=s.album))
         if now.duration:
             s.duration = now.duration
-        # Re-anchor every poll: the player's own clock beats any estimate.
-        s.anchor_pos = now.position
-        s.anchor_wall = time.time()
+
+        wall = time.time()
+        was_playing = s.playing
+        predicted = (s.anchor_pos + (wall - s.anchor_wall)) if was_playing else s.anchor_pos
+        # A source that checkpoints (Plex) repeats the same number for many
+        # polls; only a changed value is new information.
+        fresh = abs(now.position - self._last_src_pos) > 0.001
+        self._last_src_pos = now.position
+
+        if not s.anchor_wall:
+            resync = True                       # first reading for this track
+        elif was_playing != now.playing:
+            resync = True                       # play/pause flipped
+        elif fresh and abs(now.position - predicted) > config.POSITION_RESYNC_TOLERANCE:
+            resync = True                       # a real seek, or genuine drift
+        else:
+            resync = False                      # let the local clock run on
+
+        if resync:
+            s.anchor_pos = now.position
+        else:
+            s.anchor_pos = predicted
+        s.anchor_wall = wall
         s.playing = now.playing
         s.confidence = "player"
         s.status = "playing" if now.playing else "paused"
@@ -383,8 +406,24 @@ class Daemon:
         if self.source_pref in ("mpris", "auto"):
             loop = asyncio.get_running_loop()
             now = await loop.run_in_executor(None, mpris.poll)
+            if now is not None and (not now.usable or now.status.lower() == "stopped"):
+                # A stale browser tab publishing a bare page title is worse than
+                # no player at all -- it produces confident nonsense.
+                log.debug("ignoring unusable mpris entry: %r", now.title)
+                now = None
+            if now is None:
+                # Nothing describing itself over MPRIS. Plex clients (Plexamp,
+                # the mobile apps) publish nothing locally, but the server knows
+                # exactly what they are playing -- and it costs no capture.
+                info = await loop.run_in_executor(None, enrich.from_plex)
+                if info is not None and info.usable and info.state:
+                    now = mpris.Now(
+                        status="Playing" if info.playing else "Paused",
+                        artist=info.artist, title=info.title, album=info.album,
+                        duration=info.duration, position=info.position,
+                        art_url=info.art_url)
             if now is not None and now.title and now.status.lower() != "stopped":
-                self._stop_stream()   # a player is describing itself; stop listening
+                self._stop_stream()   # something is describing itself; stop listening
                 await self._apply_mpris(now)
                 await self.broadcast()
                 await asyncio.sleep(1.0)

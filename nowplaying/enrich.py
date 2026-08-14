@@ -29,10 +29,16 @@ class Info:
     art_url: str = ""
     duration: float = 0.0
     source: str = ""
+    position: float = 0.0    # seconds, from Plex's viewOffset
+    state: str = ""          # "playing" | "paused" (Plex only)
 
     @property
     def usable(self) -> bool:
         return bool(self.title or self.album or self.art_url)
+
+    @property
+    def playing(self) -> bool:
+        return self.state == "playing"
 
 
 def _plex_conf() -> tuple[str, str] | None:
@@ -76,6 +82,7 @@ def from_plex() -> Info | None:
             continue
         thumb = m.get("thumb") or m.get("parentThumb") or ""
         art = (f"{url}{thumb}?X-Plex-Token={token}" if thumb else "")
+        player = m.get("Player") or {}
         return Info(
             artist=m.get("grandparentTitle") or "",
             album=m.get("parentTitle") or "",
@@ -83,6 +90,8 @@ def from_plex() -> Info | None:
             art_url=art,
             duration=float(m.get("duration") or 0) / 1000.0,
             source="plex",
+            position=float(m.get("viewOffset") or 0) / 1000.0,
+            state=(player.get("state") or "").lower(),
         )
     return None
 

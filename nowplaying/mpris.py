@@ -28,6 +28,11 @@ _SUFFIX = re.compile(
     r"\s*[-|–]\s*(YouTube( Music)?|Spotify|SoundCloud|Bandcamp|Vimeo|Twitch)\s*$",
     re.I)
 # Parenthetical noise that stops LRCLIB matching.
+# Landing-page titles that are never a track name.
+_BARE_TITLES = {
+    "plex", "youtube", "youtube music", "spotify", "soundcloud", "bandcamp",
+    "jellyfin", "emby", "navidrome", "twitch", "vimeo", "netflix", "new tab",
+}
 _NOISE = re.compile(
     r"\s*[\(\[]\s*(?:"
     r"official(?:\s+(?:music\s+)?(?:video|audio|visualizer|lyric\w*))?|"
@@ -54,6 +59,22 @@ class Now:
     @property
     def key(self) -> str:
         return f"{self.artist.lower()}|{self.title.lower()}"
+
+    @property
+    def usable(self) -> bool:
+        """Is this an actual track, or just a browser tab's page title?
+
+        A stale tab parked on a site's landing page publishes the site name as
+        the title with no artist and no length -- believing it produces
+        confidently wrong lyrics for a track that isn't playing.
+        """
+        if not self.title:
+            return False
+        if self.artist or self.duration > 0:
+            return True
+        # No artist and no duration: only trust it if it still looks like
+        # "something - something" rather than a bare site name.
+        return len(self.title) > 3 and self.title.lower() not in _BARE_TITLES
 
 
 def clean_title(raw: str) -> str:
